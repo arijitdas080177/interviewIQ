@@ -8,7 +8,7 @@ import type {
 } from "@interviewiq/shared";
 import { getToken } from "./authToken";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
+export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {

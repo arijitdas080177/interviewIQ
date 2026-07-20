@@ -2,6 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { authMiddleware, type AuthedRequest } from "../../middleware/auth.js";
 import * as reportsService from "./service.js";
+import * as shareService from "../share/service.js";
+import { renderReportPdf } from "../export/pdf.js";
 
 export const reportsRouter = Router();
 reportsRouter.use(authMiddleware);
@@ -28,6 +30,32 @@ reportsRouter.get("/:id", async (req: AuthedRequest, res, next) => {
   try {
     const report = await reportsService.getReport(req.params.id, req.userId!);
     res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
+
+const createShareLinkSchema = z.object({
+  expiresInHours: z.number().positive().optional(),
+});
+
+reportsRouter.post("/:id/share", async (req: AuthedRequest, res, next) => {
+  try {
+    const { expiresInHours } = createShareLinkSchema.parse(req.body ?? {});
+    const link = await shareService.createShareLink(req.params.id, req.userId!, expiresInHours);
+    res.status(201).json(link);
+  } catch (err) {
+    next(err);
+  }
+});
+
+reportsRouter.get("/:id/export/pdf", async (req: AuthedRequest, res, next) => {
+  try {
+    const report = await reportsService.getReport(req.params.id, req.userId!);
+    const pdfBuffer = await renderReportPdf(report);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="interviewiq-report.pdf"`);
+    res.send(pdfBuffer);
   } catch (err) {
     next(err);
   }

@@ -1,27 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { View, Text, ScrollView, ActivityIndicator, Share, LayoutChangeEvent } from "react-native";
+import { useEffect, useState } from "react";
+import { View, Text, ActivityIndicator, Share, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import {
-  SECTION_KEYS,
-  SECTION_TITLES,
-  type PrepReportDTO,
-  type SectionKey,
-} from "@interviewiq/shared";
-import { api, ApiError } from "../../../src/api/client";
-import { AccordionSection } from "../../../src/components/AccordionSection";
-import { ResearchSectionContent } from "../../../src/components/sections/ResearchSectionContent";
-import { RoleFitContent } from "../../../src/components/sections/RoleFitContent";
-import { LikelyQuestionsContent } from "../../../src/components/sections/LikelyQuestionsContent";
-import { SuggestedAnswersContent } from "../../../src/components/sections/SuggestedAnswersContent";
-import { QuestionsToAskContent } from "../../../src/components/sections/QuestionsToAskContent";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import type { PrepReportDTO } from "@interviewiq/shared";
+import { api, ApiError, API_URL } from "../../../src/api/client";
+import { getToken } from "../../../src/api/authToken";
 import { PrimaryButton } from "../../../src/components/PrimaryButton";
-
-function previewFor(report: PrepReportDTO, key: SectionKey): string {
-  const section = report.sections[key];
-  if (!section) return "";
-  return "summary" in section ? section.summary : "";
-}
+import { ReportAccordionList } from "../../../src/components/ReportAccordionList";
 
 export default function ReportScreen() {
   const { reportId, section: deepLinkSection } = useLocalSearchParams<{
@@ -31,9 +18,10 @@ export default function ReportScreen() {
   const router = useRouter();
   const [report, setReport] = useState<PrepReportDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
-  const sectionOffsets = useRef<Partial<Record<SectionKey, number>>>({});
-  const hasScrolledToDeepLink = useRef(false);
+  const [sharing, setSharing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   useEffect(() => {
     if (!reportId) return;
@@ -45,32 +33,89 @@ export default function ReportScreen() {
       );
   }, [reportId]);
 
-  function handleSectionLayout(key: SectionKey) {
-    return (e: LayoutChangeEvent) => {
-      sectionOffsets.current[key] = e.nativeEvent.layout.y;
-      if (
-        !hasScrolledToDeepLink.current &&
-        deepLinkSection === key &&
-        sectionOffsets.current[key] !== undefined
-      ) {
-        hasScrolledToDeepLink.current = true;
-        requestAnimationFrame(() => {
-          scrollRef.current?.scrollTo({ y: Math.max(0, sectionOffsets.current[key]! - 12), animated: true });
-        });
-      }
-    };
-  }
-
   async function handleShare() {
     if (!report) return;
+    setSharing(true);
+    setExportError(null);
+    setCopiedLink(null);
+    let url: string;
     try {
-      const { url } = await api.createShareLink(report.id);
-      await Share.share({ message: url, url });
+      const result = await api.createShareLink(report.id);
+      url = result.url;
     } catch (err) {
-      // Share link isn't implemented server-side yet (Milestone 7) — the
-      // native share sheet for the raw report is still useful in the
-      // meantime, so fail quietly here rather than blocking the UI.
-      console.warn("Share link unavailable:", err);
+      setExportError(
+        err instanceof ApiError ? err.message : "Couldn't create a share link. Please try again."
+      );
+      setSharing(false);
+      return;
+    }
+
+    // The link was created successfully at this point — failures below are
+    // just about *presenting* it, so they shouldn't be reported as a share
+    // link failure.
+    try {
+      if (Platform.OS === "web") {
+        // react-native's Share API has no web implementation.
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          setCopiedLink(url);
+        }
+      } else {
+        await Share.share({ message: url, url });
+      }
+    } catch {
+      setCopiedLink(url);
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function handleExportPdf() {
+    if (!report) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const token = await getToken();
+      const exportUrl = `${API_URL}/reports/${report.id}/export/pdf`;
+
+      if (Platform.OS === "web") {
+        // expo-file-system's native download API has no web implementation
+        // (there's no app-private filesystem in a browser) — fetch the PDF
+        // as a blob and let the browser handle the download/open directly.
+        const response = await fetch(exportUrl, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (!response.ok) throw new Error("Export failed. Please try again.");
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        // window.open() here gets silently blocked by popup blockers since
+        // this fires from an async callback, not a direct click — an
+        // <a download> click is treated as a save action, not a popup, so
+        // it isn't blocked the same way.
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = `interviewiq-report-${report.id}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        return;
+      }
+
+      const dest = `${FileSystem.cacheDirectory}interviewiq-report-${report.id}.pdf`;
+      const result = await FileSystem.downloadAsync(exportUrl, dest, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (result.status !== 200) {
+        throw new Error("Export failed. Please try again.");
+      }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri, { mimeType: "application/pdf" });
+      }
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Couldn't export PDF. Please try again.");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -96,51 +141,42 @@ export default function ReportScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-white dark:bg-navy-900" edges={["top", "bottom"]}>
-      <View className="px-6 pt-4 pb-2 flex-row items-center justify-between">
-        <Text className="text-2xl font-bold text-navy-900 dark:text-white" accessibilityRole="header">
-          Your prep report
-        </Text>
-        <PrimaryButton label="Share" onPress={handleShare} variant="secondary" />
+      <View className="px-6 pt-4 pb-2">
+        <View className="flex-row items-center justify-between mb-2">
+          <Text className="text-2xl font-bold text-navy-900 dark:text-white" accessibilityRole="header">
+            Your prep report
+          </Text>
+        </View>
+        <View className="flex-row gap-2">
+          <View className="flex-1">
+            <PrimaryButton label="Share" onPress={handleShare} variant="secondary" loading={sharing} />
+          </View>
+          <View className="flex-1">
+            <PrimaryButton
+              label="Export PDF"
+              onPress={handleExportPdf}
+              variant="secondary"
+              loading={exporting}
+            />
+          </View>
+        </View>
+        {exportError ? (
+          <Text className="text-red-600 dark:text-red-300 text-xs mt-2" accessibilityLiveRegion="polite">
+            {exportError}
+          </Text>
+        ) : null}
+        {copiedLink ? (
+          <Text
+            className="text-navy-500 dark:text-navy-300 text-xs mt-2"
+            accessibilityLiveRegion="polite"
+            numberOfLines={1}
+          >
+            Link copied: {copiedLink}
+          </Text>
+        ) : null}
       </View>
 
-      <ScrollView ref={scrollRef} className="flex-1 px-6 pt-2" contentContainerStyle={{ paddingBottom: 40 }}>
-        {SECTION_KEYS.map((key, index) => {
-          const sectionData = report.sections[key];
-          if (!sectionData) return null;
-          return (
-            <View key={key} onLayout={handleSectionLayout(key)}>
-              <AccordionSection
-                id={key}
-                title={SECTION_TITLES[key]}
-                preview={previewFor(report, key)}
-                defaultExpanded={deepLinkSection ? deepLinkSection === key : index === 0}
-              >
-                {renderSectionContent(key, report)}
-              </AccordionSection>
-            </View>
-          );
-        })}
-      </ScrollView>
+      <ReportAccordionList report={report} deepLinkSection={deepLinkSection} />
     </SafeAreaView>
   );
-}
-
-function renderSectionContent(key: SectionKey, report: PrepReportDTO) {
-  const section = report.sections[key];
-  if (!section) return null;
-  switch (key) {
-    case "companyResearch":
-    case "interviewerResearch":
-      return <ResearchSectionContent section={section as any} />;
-    case "roleFitAnalysis":
-      return <RoleFitContent section={section as any} />;
-    case "likelyQuestions":
-      return <LikelyQuestionsContent section={section as any} />;
-    case "suggestedAnswers":
-      return <SuggestedAnswersContent section={section as any} />;
-    case "questionsToAsk":
-      return <QuestionsToAskContent section={section as any} />;
-    default:
-      return null;
-  }
 }
