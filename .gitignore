@@ -1,0 +1,21 @@
+node_modules/
+.env
+.env.local
+dist/
+build/
+*.log
+.DS_Store
+
+# Expo
+app/.expo/
+app/dist/
+app/web-build/
+app/ios/
+app/android/
+
+# Server
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Drizzle
+server/drizzle/meta/

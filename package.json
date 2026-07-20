@@ -1,0 +1,16 @@
+{
+  "name": "interviewiq",
+  "private": true,
+  "workspaces": [
+    "app",
+    "server",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=server",
+    "dev:app": "npm run start --workspace=app",
+    "migrate": "npm run migrate --workspace=server",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down"
+  }
+}
