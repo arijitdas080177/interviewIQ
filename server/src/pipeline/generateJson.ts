@@ -13,6 +13,7 @@ interface GenerateJsonOptions<T> {
   prompt: string;
   schema: ZodSchema<T>;
   tools?: WebSearchTool[];
+  maxTokens?: number;
 }
 
 /**
@@ -22,11 +23,13 @@ interface GenerateJsonOptions<T> {
 export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T> {
   const messages = [{ role: "user" as const, content: opts.prompt }];
 
+  const maxTokens = opts.maxTokens ?? 8192;
+
   const run = async (extraSystem?: string) => {
     const system = extraSystem ? `${opts.system}\n\n${extraSystem}` : opts.system;
     return opts.tools?.length
-      ? opts.provider.generateWithTools({ system, messages, tools: opts.tools })
-      : opts.provider.generateText({ system, messages });
+      ? opts.provider.generateWithTools({ system, messages, tools: opts.tools, maxTokens })
+      : opts.provider.generateText({ system, messages, maxTokens });
   };
 
   const first = await run();

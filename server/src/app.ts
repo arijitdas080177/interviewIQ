@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { authRouter } from "./modules/auth/routes.js";
 import { documentsRouter } from "./modules/documents/routes.js";
+import { reportsRouter } from "./modules/reports/routes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 export function createApp() {
@@ -16,6 +17,7 @@ export function createApp() {
 
   app.use("/auth", authRouter);
   app.use("/documents", documentsRouter);
+  app.use("/reports", reportsRouter);
 
   app.use(errorHandler);
 
