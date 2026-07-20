@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { prepReports } from "../db/schema.js";
 import { getLLMProvider } from "../llm/index.js";
@@ -19,13 +19,17 @@ interface RunPipelineInput {
 }
 
 async function patchSections(reportId: string, patch: Record<string, unknown>) {
-  const existing = await db.query.prepReports.findFirst({
-    where: eq(prepReports.id, reportId),
-  });
-  const merged = { ...(existing?.sections ?? {}), ...patch };
+  // Atomic jsonb merge in the database, rather than read-modify-write in
+  // application code — the latter loses updates when two patches race
+  // (e.g. concurrent orchestrator runs, or two calls resolving close
+  // together), since each read would miss the other's not-yet-committed
+  // write and their writes would clobber each other.
   await db
     .update(prepReports)
-    .set({ sections: merged, updatedAt: new Date() })
+    .set({
+      sections: sql`${prepReports.sections} || ${JSON.stringify(patch)}::jsonb`,
+      updatedAt: new Date(),
+    })
     .where(eq(prepReports.id, reportId));
 }
 
