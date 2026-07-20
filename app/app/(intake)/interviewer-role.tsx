@@ -34,7 +34,7 @@ export default function InterviewerRoleScreen() {
         interviewerProfileSkipped: store.interviewerProfileSkipped,
         interviewerRole: role.trim(),
       });
-      router.push({ pathname: "/processing", params: { reportId: report.id } });
+      router.push({ pathname: "/report/[reportId]", params: { reportId: report.id } });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
     } finally {

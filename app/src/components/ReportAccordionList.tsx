@@ -2,33 +2,54 @@ import { useRef } from "react";
 import { ScrollView, View, type LayoutChangeEvent } from "react-native";
 import { SECTION_KEYS, SECTION_TITLES, type PrepReportDTO, type SectionKey } from "@interviewiq/shared";
 import { AccordionSection } from "./AccordionSection";
-import { ResearchSectionContent } from "./sections/ResearchSectionContent";
-import { RoleFitContent } from "./sections/RoleFitContent";
-import { LikelyQuestionsContent } from "./sections/LikelyQuestionsContent";
-import { SuggestedAnswersContent } from "./sections/SuggestedAnswersContent";
+import { ProseSectionContent } from "./sections/ProseSectionContent";
+import { QuestionsAndAnswersContent } from "./sections/QuestionsAndAnswersContent";
 import { QuestionsToAskContent } from "./sections/QuestionsToAskContent";
+import { PreparationTipsContent } from "./sections/PreparationTipsContent";
 
 function previewFor(report: PrepReportDTO, key: SectionKey): string {
-  const section = report.sections[key];
-  if (!section) return "";
-  return "summary" in section ? section.summary : "";
+  const sections = report.sections;
+  switch (key) {
+    case "companyResearch":
+      return sections.companyResearch ?? "";
+    case "interviewerResearch":
+      return sections.interviewerResearch ?? "";
+    case "interviewQuestionsAndAnswers":
+      return sections.interviewQuestionsAndAnswers
+        ? `${sections.interviewQuestionsAndAnswers.length} questions with model answers`
+        : "";
+    case "questionsToAsk":
+      return sections.questionsToAsk ? `${sections.questionsToAsk.length} questions to ask` : "";
+    case "preparationTips":
+      return sections.preparationTips?.[0] ?? "";
+    default:
+      return "";
+  }
 }
 
 function renderSectionContent(key: SectionKey, report: PrepReportDTO) {
-  const section = report.sections[key];
-  if (!section) return null;
+  const sections = report.sections;
   switch (key) {
     case "companyResearch":
+      return sections.companyResearch ? (
+        <ProseSectionContent text={sections.companyResearch} />
+      ) : null;
     case "interviewerResearch":
-      return <ResearchSectionContent section={section as any} />;
-    case "roleFitAnalysis":
-      return <RoleFitContent section={section as any} />;
-    case "likelyQuestions":
-      return <LikelyQuestionsContent section={section as any} />;
-    case "suggestedAnswers":
-      return <SuggestedAnswersContent section={section as any} />;
+      return sections.interviewerResearch ? (
+        <ProseSectionContent text={sections.interviewerResearch} />
+      ) : null;
+    case "interviewQuestionsAndAnswers":
+      return sections.interviewQuestionsAndAnswers ? (
+        <QuestionsAndAnswersContent items={sections.interviewQuestionsAndAnswers} />
+      ) : null;
     case "questionsToAsk":
-      return <QuestionsToAskContent section={section as any} />;
+      return sections.questionsToAsk ? (
+        <QuestionsToAskContent items={sections.questionsToAsk} />
+      ) : null;
+    case "preparationTips":
+      return sections.preparationTips ? (
+        <PreparationTipsContent tips={sections.preparationTips} />
+      ) : null;
     default:
       return null;
   }

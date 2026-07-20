@@ -1,14 +1,9 @@
 import { SECTION_KEYS, SECTION_TITLES } from "@interviewiq/shared";
 import type {
-  LikelyQuestionsSection,
   PrepReportSections,
-  QuestionsToAskSection,
-  ResearchSection,
-  RoleFitSection,
-  SectionClaim,
-  SectionDetail,
+  QuestionAndAnswer,
+  QuestionToAsk,
   SectionKey,
-  SuggestedAnswersSection,
 } from "@interviewiq/shared";
 
 export interface ReportForExport {
@@ -24,97 +19,57 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderClaim(claim: SectionClaim): string {
-  const inference = claim.confidence === "inference";
-  const citations = claim.citations?.length
-    ? `<div class="citation">${claim.citations.map((c) => escapeHtml(c.title ?? c.url)).join(" · ")}</div>`
-    : "";
-  return `<li class="${inference ? "inference" : ""}">${escapeHtml(claim.text)}${
-    inference ? ' <span class="tag">(inferred)</span>' : ""
-  }${citations}</li>`;
+function renderProse(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((para) => `<p>${escapeHtml(para.trim())}</p>`)
+    .join("");
 }
 
-function renderDetail(detail: SectionDetail): string {
-  return `
-    <div class="detail">
-      <h3>${escapeHtml(detail.heading)}</h3>
-      <p>${escapeHtml(detail.body)}</p>
-      <ul>${detail.claims.map(renderClaim).join("")}</ul>
-    </div>`;
-}
-
-function renderResearchSection(section: ResearchSection): string {
-  return `<p class="summary">${escapeHtml(section.summary)}</p>${section.details.map(renderDetail).join("")}`;
-}
-
-function renderRoleFitSection(section: RoleFitSection): string {
-  return `
-    <p class="summary">${escapeHtml(section.summary)}</p>
-    <h4>Strong matches</h4>
-    ${section.strongMatches.map(renderDetail).join("")}
-    <h4>Potential gaps</h4>
-    ${section.potentialGaps.map(renderDetail).join("")}`;
-}
-
-function renderLikelyQuestions(section: LikelyQuestionsSection): string {
-  return `
-    <p class="summary">${escapeHtml(section.summary)}</p>
-    ${section.questions
-      .map(
-        (q) => `
+function renderQuestionsAndAnswers(items: QuestionAndAnswer[]): string {
+  return items
+    .map(
+      (qa) => `
       <div class="detail">
-        <span class="tag">${escapeHtml(q.category)}</span>
-        <h3>${escapeHtml(q.question)}</h3>
-        <p>${escapeHtml(q.rationale)}</p>
+        <span class="tag">${escapeHtml(qa.category)}</span>
+        <h3>${escapeHtml(qa.question)}</h3>
+        ${renderProse(qa.sampleAnswer)}
+        <ul>${qa.mentalModel.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul>
       </div>`
-      )
-      .join("")}`;
+    )
+    .join("");
 }
 
-function renderSuggestedAnswers(section: SuggestedAnswersSection): string {
-  return `
-    <p class="summary">${escapeHtml(section.summary)}</p>
-    ${section.answers
-      .map(
-        (a) => `
-      <div class="detail">
-        <h3>${escapeHtml(a.question)}</h3>
-        <p>${escapeHtml(a.answer)}</p>
-        ${a.groundedIn.length ? `<div class="citation">Grounded in: ${a.groundedIn.map(escapeHtml).join(", ")}</div>` : ""}
-      </div>`
-      )
-      .join("")}`;
-}
-
-function renderQuestionsToAsk(section: QuestionsToAskSection): string {
-  return `
-    <p class="summary">${escapeHtml(section.summary)}</p>
-    ${section.questions
-      .map(
-        (q) => `
+function renderQuestionsToAsk(items: QuestionToAsk[]): string {
+  return items
+    .map(
+      (q) => `
       <div class="detail">
         <h3>${escapeHtml(q.question)}</h3>
         <p>${escapeHtml(q.rationale)}</p>
       </div>`
-      )
-      .join("")}`;
+    )
+    .join("");
 }
 
-function renderSectionBody(key: SectionKey, report: ReportForExport): string {
-  const section = report.sections[key];
-  if (!section) return "";
+function renderPreparationTips(tips: string[]): string {
+  return `<ul>${tips.map((tip) => `<li>${escapeHtml(tip)}</li>`).join("")}</ul>`;
+}
+
+function renderSectionBody(key: SectionKey, sections: PrepReportSections): string {
   switch (key) {
     case "companyResearch":
+      return sections.companyResearch ? renderProse(sections.companyResearch) : "";
     case "interviewerResearch":
-      return renderResearchSection(section as ResearchSection);
-    case "roleFitAnalysis":
-      return renderRoleFitSection(section as RoleFitSection);
-    case "likelyQuestions":
-      return renderLikelyQuestions(section as LikelyQuestionsSection);
-    case "suggestedAnswers":
-      return renderSuggestedAnswers(section as SuggestedAnswersSection);
+      return sections.interviewerResearch ? renderProse(sections.interviewerResearch) : "";
+    case "interviewQuestionsAndAnswers":
+      return sections.interviewQuestionsAndAnswers
+        ? renderQuestionsAndAnswers(sections.interviewQuestionsAndAnswers)
+        : "";
     case "questionsToAsk":
-      return renderQuestionsToAsk(section as QuestionsToAskSection);
+      return sections.questionsToAsk ? renderQuestionsToAsk(sections.questionsToAsk) : "";
+    case "preparationTips":
+      return sections.preparationTips ? renderPreparationTips(sections.preparationTips) : "";
     default:
       return "";
   }
@@ -126,7 +81,7 @@ export function buildReportHtml(report: ReportForExport): string {
       (key) => `
       <section>
         <h2>${escapeHtml(SECTION_TITLES[key])}</h2>
-        ${renderSectionBody(key, report)}
+        ${renderSectionBody(key, report.sections)}
       </section>`
     )
     .join("");
@@ -143,15 +98,11 @@ export function buildReportHtml(report: ReportForExport): string {
   section { page-break-inside: avoid; margin-bottom: 28px; }
   h2 { font-size: 18px; border-bottom: 2px solid #1f2f4d; padding-bottom: 6px; margin-bottom: 12px; color: #1f2f4d; }
   h3 { font-size: 14px; margin-bottom: 4px; }
-  h4 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: #3d5580; margin: 16px 0 8px; }
   p { font-size: 12px; margin: 0 0 8px; }
-  .summary { font-size: 13px; font-style: italic; color: #3d5580; margin-bottom: 16px; }
-  .detail { margin-bottom: 16px; }
+  .detail { margin-bottom: 20px; }
   ul { margin: 0 0 8px; padding-left: 18px; }
   li { font-size: 12px; margin-bottom: 4px; }
-  li.inference { font-style: italic; color: #6b7280; }
   .tag { font-size: 10px; text-transform: uppercase; color: #a9843a; }
-  .citation { font-size: 10px; color: #a9843a; margin-top: 2px; }
 </style>
 </head>
 <body>

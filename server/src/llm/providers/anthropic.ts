@@ -53,6 +53,21 @@ export class AnthropicProvider implements LLMProvider {
     return { ...result, raw: response };
   }
 
+  async *generateTextStream(opts: GenerateOptions): AsyncGenerator<string, void, unknown> {
+    const stream = this.client.messages.stream({
+      model: DEFAULT_MODEL,
+      max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+      temperature: opts.temperature,
+      system: opts.system,
+      messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+    });
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        yield event.delta.text;
+      }
+    }
+  }
+
   async generateWithTools(opts: GenerateWithToolsOptions): Promise<LLMResult> {
     const hasWebSearch = opts.tools.some((t) => t.type === "web_search");
     const response = await this.client.messages.create({

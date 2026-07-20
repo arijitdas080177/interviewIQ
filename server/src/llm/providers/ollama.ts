@@ -40,11 +40,19 @@ export class OllamaProvider implements LLMProvider {
 
   private async chat(
     messages: OllamaMessage[],
-    opts: { maxTokens?: number; temperature?: number; tools?: (typeof WEB_SEARCH_TOOL)[] }
+    opts: {
+      maxTokens?: number;
+      temperature?: number;
+      tools?: (typeof WEB_SEARCH_TOOL)[];
+    }
   ): Promise<OllamaChatResponse> {
     const response = await fetch(`${env.ollamaBaseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // Node's fetch defaults to a 5-minute headers timeout, which a slower
+      // local machine can legitimately exceed on a single generation —
+      // this isn't a hung request, just slower hardware than a hosted API.
+      signal: AbortSignal.timeout(15 * 60 * 1000),
       body: JSON.stringify({
         model: env.ollamaModel,
         messages,
@@ -78,6 +86,51 @@ export class OllamaProvider implements LLMProvider {
       temperature: opts.temperature,
     });
     return { text: response.message.content.trim(), citations: [], raw: response };
+  }
+
+  async *generateTextStream(opts: GenerateOptions): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${env.ollamaBaseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(15 * 60 * 1000),
+      body: JSON.stringify({
+        model: env.ollamaModel,
+        messages: this.toOllamaMessages(opts),
+        stream: true,
+        options: {
+          num_predict: opts.maxTokens ?? 4096,
+          temperature: opts.temperature,
+        },
+      }),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(
+        `Ollama request failed: ${response.status} ${await response.text()}. ` +
+          `Is 'ollama serve' running and has '${env.ollamaModel}' been pulled?`
+      );
+    }
+
+    // Ollama streams newline-delimited JSON objects, one per token chunk,
+    // each shaped like { message: { content: "<delta>" }, done: boolean }.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const chunk = JSON.parse(line) as OllamaChatResponse & { done: boolean };
+        if (chunk.message?.content) yield chunk.message.content;
+      }
+    }
+    if (buffer.trim()) {
+      const chunk = JSON.parse(buffer) as OllamaChatResponse & { done: boolean };
+      if (chunk.message?.content) yield chunk.message.content;
+    }
   }
 
   async generateWithTools(opts: GenerateWithToolsOptions): Promise<LLMResult> {

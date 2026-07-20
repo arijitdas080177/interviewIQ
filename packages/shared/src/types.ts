@@ -14,57 +14,11 @@ export interface DocumentDTO {
 
 export type ReportStatus = "draft" | "processing" | "completed" | "failed";
 
-export type ClaimConfidence = "sourced" | "inference";
-
-export interface Citation {
-  url: string;
-  title?: string;
-  snippet?: string;
-}
-
-export interface SectionClaim {
-  text: string;
-  confidence: ClaimConfidence;
-  citations?: Citation[];
-}
-
-export interface SectionDetail {
-  heading: string;
-  body: string;
-  claims: SectionClaim[];
-}
-
-export interface ResearchSection {
-  summary: string;
-  details: SectionDetail[];
-}
-
-export interface RoleFitSection {
-  summary: string;
-  strongMatches: SectionDetail[];
-  potentialGaps: SectionDetail[];
-}
-
-export interface InterviewQuestion {
+export interface QuestionAndAnswer {
+  category: string;
   question: string;
-  category: "strategic" | "behavioral" | "technical" | "leadership";
-  rationale: string;
-}
-
-export interface LikelyQuestionsSection {
-  summary: string;
-  questions: InterviewQuestion[];
-}
-
-export interface SuggestedAnswer {
-  question: string;
-  answer: string;
-  groundedIn: string[];
-}
-
-export interface SuggestedAnswersSection {
-  summary: string;
-  answers: SuggestedAnswer[];
+  sampleAnswer: string;
+  mentalModel: string[];
 }
 
 export interface QuestionToAsk {
@@ -72,27 +26,20 @@ export interface QuestionToAsk {
   rationale: string;
 }
 
-export interface QuestionsToAskSection {
-  summary: string;
-  questions: QuestionToAsk[];
-}
-
 export interface PrepReportSections {
-  companyResearch?: ResearchSection;
-  interviewerResearch?: ResearchSection;
-  roleFitAnalysis?: RoleFitSection;
-  likelyQuestions?: LikelyQuestionsSection;
-  suggestedAnswers?: SuggestedAnswersSection;
-  questionsToAsk?: QuestionsToAskSection;
+  companyResearch?: string;
+  interviewerResearch?: string;
+  interviewQuestionsAndAnswers?: QuestionAndAnswer[];
+  questionsToAsk?: QuestionToAsk[];
+  preparationTips?: string[];
 }
 
 export const SECTION_KEYS = [
   "companyResearch",
   "interviewerResearch",
-  "roleFitAnalysis",
-  "likelyQuestions",
-  "suggestedAnswers",
+  "interviewQuestionsAndAnswers",
   "questionsToAsk",
+  "preparationTips",
 ] as const;
 
 export type SectionKey = (typeof SECTION_KEYS)[number];

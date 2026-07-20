@@ -51,4 +51,12 @@ export interface LLMProvider {
 
   /** Text generation with tool access (currently: web search) for grounded research. */
   generateWithTools(opts: GenerateWithToolsOptions): Promise<LLMResult>;
+
+  /**
+   * Same as generateText, but yields text deltas as they're generated
+   * instead of waiting for the full response — lets callers surface partial
+   * output live (e.g. over SSE) instead of a single multi-minute wait,
+   * especially valuable for slower local models.
+   */
+  generateTextStream(opts: GenerateOptions): AsyncGenerator<string, void, unknown>;
 }

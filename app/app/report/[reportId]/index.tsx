@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View, Text, ActivityIndicator, Share, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -7,8 +7,16 @@ import * as Sharing from "expo-sharing";
 import type { PrepReportDTO } from "@interviewiq/shared";
 import { api, ApiError, API_URL } from "../../../src/api/client";
 import { getToken } from "../../../src/api/authToken";
+import { streamReport } from "../../../src/api/streamReport";
 import { PrimaryButton } from "../../../src/components/PrimaryButton";
 import { ReportAccordionList } from "../../../src/components/ReportAccordionList";
+import { LiveGenerationView } from "../../../src/components/LiveGenerationView";
+
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 export default function ReportScreen() {
   const { reportId, section: deepLinkSection } = useLocalSearchParams<{
@@ -17,6 +25,9 @@ export default function ReportScreen() {
   }>();
   const router = useRouter();
   const [report, setReport] = useState<PrepReportDTO | null>(null);
+  const [liveText, setLiveText] = useState("");
+  const [isLive, setIsLive] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -25,12 +36,61 @@ export default function ReportScreen() {
 
   useEffect(() => {
     if (!reportId) return;
-    api
-      .getReport(reportId)
-      .then(setReport)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : "Couldn't load this report.")
-      );
+    let cancelled = false;
+    let stopStream: (() => void) | undefined;
+    let elapsedInterval: ReturnType<typeof setInterval> | undefined;
+
+    async function start() {
+      try {
+        const initial = await api.getReport(reportId);
+        if (cancelled) return;
+
+        if (initial.status === "completed") {
+          setReport(initial);
+          return;
+        }
+        if (initial.status === "failed") {
+          setError(initial.errorMessage ?? "Something went wrong generating your report.");
+          return;
+        }
+
+        setIsLive(true);
+        elapsedInterval = setInterval(() => setElapsed((s) => s + 1), 1000);
+
+        stopStream = await streamReport(reportId, {
+          onChunk: (text) => setLiveText((prev) => prev + text),
+          onReset: () => setLiveText(""),
+          onDone: async () => {
+            if (elapsedInterval) clearInterval(elapsedInterval);
+            setIsLive(false);
+            try {
+              const finalReport = await api.getReport(reportId);
+              if (!cancelled) setReport(finalReport);
+            } catch (err) {
+              if (!cancelled) {
+                setError(err instanceof ApiError ? err.message : "Couldn't load the finished report.");
+              }
+            }
+          },
+          onError: (message) => {
+            if (elapsedInterval) clearInterval(elapsedInterval);
+            setIsLive(false);
+            if (!cancelled) setError(message);
+          },
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Couldn't load this report.");
+        }
+      }
+    }
+
+    start();
+    return () => {
+      cancelled = true;
+      stopStream?.();
+      if (elapsedInterval) clearInterval(elapsedInterval);
+    };
   }, [reportId]);
 
   async function handleShare() {
@@ -127,6 +187,19 @@ export default function ReportScreen() {
         </Text>
         <Text className="text-navy-500 dark:text-navy-300 text-sm text-center mb-6">{error}</Text>
         <PrimaryButton label="Back to start" onPress={() => router.replace("/(intake)/resume")} />
+      </SafeAreaView>
+    );
+  }
+
+  if (isLive) {
+    return (
+      <SafeAreaView className="flex-1 bg-white dark:bg-navy-900" edges={["top", "bottom"]}>
+        <View className="px-6 pt-4 pb-2">
+          <Text className="text-2xl font-bold text-navy-900 dark:text-white" accessibilityRole="header">
+            Your prep report
+          </Text>
+        </View>
+        <LiveGenerationView text={liveText} elapsedLabel={formatElapsed(elapsed)} />
       </SafeAreaView>
     );
   }

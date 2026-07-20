@@ -54,6 +54,22 @@ export class OpenAIProvider implements LLMProvider {
     return { ...result, raw: response };
   }
 
+  async *generateTextStream(opts: GenerateOptions): AsyncGenerator<string, void, unknown> {
+    const stream = await this.client.responses.create({
+      model: DEFAULT_MODEL,
+      instructions: opts.system,
+      input: buildInput(opts),
+      max_output_tokens: opts.maxTokens,
+      temperature: opts.temperature,
+      stream: true,
+    });
+    for await (const event of stream) {
+      if (event.type === "response.output_text.delta") {
+        yield event.delta;
+      }
+    }
+  }
+
   async generateWithTools(opts: GenerateWithToolsOptions): Promise<LLMResult> {
     const hasWebSearch = opts.tools.some((t) => t.type === "web_search");
     const response = await this.client.responses.create({

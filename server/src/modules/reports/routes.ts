@@ -4,6 +4,7 @@ import { authMiddleware, type AuthedRequest } from "../../middleware/auth.js";
 import * as reportsService from "./service.js";
 import * as shareService from "../share/service.js";
 import { renderReportPdf } from "../export/pdf.js";
+import { subscribeToReportStream } from "../../pipeline/reportStream.js";
 
 export const reportsRouter = Router();
 reportsRouter.use(authMiddleware);
@@ -30,6 +31,51 @@ reportsRouter.get("/:id", async (req: AuthedRequest, res, next) => {
   try {
     const report = await reportsService.getReport(req.params.id, req.userId!);
     res.json(report);
+  } catch (err) {
+    next(err);
+  }
+});
+
+reportsRouter.get("/:id/stream", async (req: AuthedRequest, res, next) => {
+  try {
+    const report = await reportsService.getReport(req.params.id, req.userId!);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    function sendEvent(event: string, data: unknown) {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+
+    if (report.status === "completed") {
+      sendEvent("done", { sections: report.sections });
+      res.end();
+      return;
+    }
+    if (report.status === "failed") {
+      sendEvent("error", { message: report.errorMessage ?? "Report generation failed." });
+      res.end();
+      return;
+    }
+
+    const { initialBuffer, unsubscribe } = subscribeToReportStream(req.params.id, {
+      onChunk: (text) => sendEvent("chunk", { text }),
+      onReset: () => sendEvent("reset", {}),
+      onDone: (sections) => {
+        sendEvent("done", { sections });
+        res.end();
+      },
+      onError: (message) => {
+        sendEvent("error", { message });
+        res.end();
+      },
+    });
+
+    if (initialBuffer) sendEvent("chunk", { text: initialBuffer });
+
+    req.on("close", unsubscribe);
   } catch (err) {
     next(err);
   }

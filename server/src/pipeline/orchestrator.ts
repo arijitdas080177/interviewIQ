@@ -1,13 +1,12 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import type { PrepReportSections } from "@interviewiq/shared";
 import { db } from "../db/client.js";
 import { prepReports } from "../db/schema.js";
 import { getLLMProvider } from "../llm/index.js";
-import { companyResearch } from "./sections/companyResearch.js";
-import { interviewerResearch } from "./sections/interviewerResearch.js";
-import { roleFitAnalysis } from "./sections/roleFitAnalysis.js";
-import { likelyQuestions } from "./sections/likelyQuestions.js";
-import { suggestedAnswers } from "./sections/suggestedAnswers.js";
-import { questionsToAsk } from "./sections/questionsToAsk.js";
+import type { LLMProvider } from "../llm/types.js";
+import { buildFullReportPrompt } from "./prompts/fullReport.js";
+import { parseReportOutput } from "./parseReportOutput.js";
+import { publishChunk, publishDone, publishError, publishReset } from "./reportStream.js";
 
 interface RunPipelineInput {
   reportId: string;
@@ -18,19 +17,43 @@ interface RunPipelineInput {
   interviewerRole: string;
 }
 
-async function patchSections(reportId: string, patch: Record<string, unknown>) {
-  // Atomic jsonb merge in the database, rather than read-modify-write in
-  // application code — the latter loses updates when two patches race
-  // (e.g. concurrent orchestrator runs, or two calls resolving close
-  // together), since each read would miss the other's not-yet-committed
-  // write and their writes would clobber each other.
-  await db
-    .update(prepReports)
-    .set({
-      sections: sql`${prepReports.sections} || ${JSON.stringify(patch)}::jsonb`,
-      updatedAt: new Date(),
-    })
-    .where(eq(prepReports.id, reportId));
+const SYSTEM_PROMPT =
+  "You are a precise, thorough executive interview preparation coach. Follow the requested tag " +
+  "format exactly — every section must appear inside its named tag, and the " +
+  "<interview_questions_and_answers> and <questions_to_ask> sections must use the exact " +
+  "per-item tag structure requested, repeated once per item.";
+
+function isSufficient(sections: PrepReportSections): boolean {
+  return Boolean(
+    sections.companyResearch &&
+      sections.interviewerResearch &&
+      sections.interviewQuestionsAndAnswers?.length &&
+      sections.questionsToAsk?.length &&
+      sections.preparationTips?.length
+  );
+}
+
+async function streamGeneration(
+  provider: LLMProvider,
+  reportId: string,
+  prompt: string,
+  retryNote?: string
+): Promise<PrepReportSections> {
+  let rawText = "";
+  for await (const delta of provider.generateTextStream({
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: retryNote ? `${prompt}\n\n${retryNote}` : prompt }],
+    // This single prompt asks for 10-15 full Q&A pairs (each a 2-4
+    // paragraph model answer plus a mental model) on top of the research
+    // and prep-tips sections — that's routinely 9000+ output tokens, so
+    // the old per-section budget (8192) was truncating generation before
+    // the later tags ever appeared.
+    maxTokens: 16000,
+  })) {
+    rawText += delta;
+    publishChunk(reportId, delta);
+  }
+  return parseReportOutput(rawText);
 }
 
 export async function runPipeline(input: RunPipelineInput): Promise<void> {
@@ -42,57 +65,44 @@ export async function runPipeline(input: RunPipelineInput): Promise<void> {
       .set({ status: "processing", updatedAt: new Date() })
       .where(eq(prepReports.id, input.reportId));
 
-    // Phase 1: independent research, run concurrently.
-    const [companyResult, interviewerResult, roleFitResult] = await Promise.all([
-      companyResearch(provider, input.jobDescriptionText),
-      interviewerResearch(
+    const prompt = buildFullReportPrompt(input);
+
+    let sections = await streamGeneration(provider, input.reportId, prompt);
+    if (!isSufficient(sections)) {
+      // A single retry with an explicit nudge — smaller/local models
+      // occasionally drop a tag or merge sections; this is the same
+      // one-retry allowance the old per-section JSON path used. Signal a
+      // reset so subscribers discard the incomplete first attempt's text.
+      publishReset(input.reportId);
+      sections = await streamGeneration(
         provider,
-        input.interviewerProfileText,
-        input.interviewerProfileSkipped,
-        input.interviewerRole
-      ),
-      roleFitAnalysis(provider, input.resumeText, input.jobDescriptionText),
-    ]);
-    await patchSections(input.reportId, {
-      companyResearch: companyResult,
-      interviewerResearch: interviewerResult,
-      roleFitAnalysis: roleFitResult,
-    });
+        input.reportId,
+        prompt,
+        "IMPORTANT: your previous response was missing one or more required tagged sections. " +
+          "Make sure your response includes exactly one each of <company_research>, " +
+          "<interviewer_research>, <interview_questions_and_answers>, <questions_to_ask>, and " +
+          "<preparation_tips>, with the per-item tags inside <interview_questions_and_answers> " +
+          "and <questions_to_ask> repeated once per item as specified."
+      );
+    }
 
-    // Phase 2: questions depend on phase 1 outputs.
-    const likelyQuestionsResult = await likelyQuestions(
-      provider,
-      input.jobDescriptionText,
-      input.interviewerRole,
-      companyResult,
-      interviewerResult,
-      roleFitResult
-    );
-    await patchSections(input.reportId, { likelyQuestions: likelyQuestionsResult });
-
-    // Phase 3: answers and questions-to-ask both depend on phase 2, not each other.
-    const [suggestedAnswersResult, questionsToAskResult] = await Promise.all([
-      suggestedAnswers(provider, input.resumeText, likelyQuestionsResult),
-      questionsToAsk(provider, companyResult, interviewerResult, roleFitResult),
-    ]);
-    await patchSections(input.reportId, {
-      suggestedAnswers: suggestedAnswersResult,
-      questionsToAsk: questionsToAskResult,
-    });
-
-    await db
-      .update(prepReports)
-      .set({ status: "completed", updatedAt: new Date() })
-      .where(eq(prepReports.id, input.reportId));
-  } catch (err) {
     await db
       .update(prepReports)
       .set({
-        status: "failed",
-        errorMessage: err instanceof Error ? err.message : String(err),
+        sections: sections as Record<string, unknown>,
+        status: "completed",
         updatedAt: new Date(),
       })
       .where(eq(prepReports.id, input.reportId));
+
+    publishDone(input.reportId, sections);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db
+      .update(prepReports)
+      .set({ status: "failed", errorMessage: message, updatedAt: new Date() })
+      .where(eq(prepReports.id, input.reportId));
+    publishError(input.reportId, message);
     throw err;
   }
 }

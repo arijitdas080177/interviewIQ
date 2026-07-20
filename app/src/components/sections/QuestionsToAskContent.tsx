@@ -1,10 +1,10 @@
 import { View, Text } from "react-native";
-import type { QuestionsToAskSection } from "@interviewiq/shared";
+import type { QuestionToAsk } from "@interviewiq/shared";
 
-export function QuestionsToAskContent({ section }: { section: QuestionsToAskSection }) {
+export function QuestionsToAskContent({ items }: { items: QuestionToAsk[] }) {
   return (
     <View>
-      {section.questions.map((q, i) => (
+      {items.map((q, i) => (
         <View key={i} className="mb-4">
           <Text className="text-base font-semibold text-navy-900 dark:text-white mb-1">
             {q.question}
