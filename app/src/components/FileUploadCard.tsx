@@ -42,6 +42,7 @@ export function FileUploadCard({ fileName, onPicked }: FileUploadCardProps) {
         disabled={uploading}
         accessibilityRole="button"
         accessibilityLabel={fileName ? `Replace uploaded file, currently ${fileName}` : "Upload a file"}
+        importantForAccessibility="no-hide-descendants"
         className="min-h-[220px] rounded-xl border-2 border-dashed border-navy-200 dark:border-navy-600 bg-navy-50 dark:bg-navy-800 items-center justify-center p-6"
       >
         {uploading ? (

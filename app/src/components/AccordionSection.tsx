@@ -28,7 +28,10 @@ export function AccordionSection({
         onPress={() => setExpanded((e) => !e)}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        accessibilityLabel={`${title}, ${expanded ? "expanded" : "collapsed"}`}
+        accessibilityLabel={
+          expanded ? `${title}, expanded` : `${title}, collapsed. ${preview}`
+        }
+        importantForAccessibility="no-hide-descendants"
         className="px-5 py-4"
       >
         <View className="flex-row items-center justify-between">
