@@ -12,5 +12,14 @@
     "migrate": "npm run migrate --workspace=server",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down"
+  },
+  "allowScripts": {
+    "esbuild@0.18.20": true,
+    "esbuild@0.19.12": true,
+    "esbuild@0.28.1": true,
+    "esbuild@0.21.5": true,
+    "bcrypt@5.1.1": true,
+    "puppeteer@23.11.1": true,
+    "fsevents@2.3.3": true
   }
 }
